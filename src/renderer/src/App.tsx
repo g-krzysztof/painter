@@ -26,6 +26,62 @@ function formatSize(bytes: number): string {
   return `${value.toLocaleString('pl-PL', { maximumFractionDigits: value < 10 ? 1 : 0 })} ${units[unit]}`
 }
 
+// Formats the canvas can write back, so a crop keeps the file's own format and name.
+const CROP_TYPES: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp'
+}
+
+function cropType(entry: FolderEntry): string | undefined {
+  return CROP_TYPES[entry.name.split('.').pop()?.toLowerCase() ?? '']
+}
+
+// Edges in the image's own pixels, so the crop stays put while zooming.
+interface CropRect {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+// The preview <img> comes from another origin and would taint a canvas, so the
+// bytes are fetched over IPC and decoded here instead.
+async function cropImage(entry: FolderEntry, rect: CropRect, type: string): Promise<Uint8Array> {
+  const bytes = await window.api.readImage(entry.path)
+  const bitmap = await createImageBitmap(new Blob([bytes]), { imageOrientation: 'from-image' })
+  const width = rect.right - rect.left
+  const height = rect.bottom - rect.top
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  canvas.getContext('2d')!.drawImage(bitmap, rect.left, rect.top, width, height, 0, 0, width, height)
+  bitmap.close()
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, 0.95))
+  if (!blob) throw new Error('Encoding failed')
+  return new Uint8Array(await blob.arrayBuffer())
+}
+
+type Edges = Partial<Record<keyof CropRect, true>>
+
+const CROP_HANDLES: [string, Edges][] = [
+  ['n', { top: true }],
+  ['s', { bottom: true }],
+  ['w', { left: true }],
+  ['e', { right: true }],
+  ['nw', { top: true, left: true }],
+  ['ne', { top: true, right: true }],
+  ['sw', { bottom: true, left: true }],
+  ['se', { bottom: true, right: true }]
+]
+
+type CropDrag = { kind: 'draw'; x: number; y: number } | { kind: 'edges'; edges: Edges }
+
+function rectFrom(x1: number, y1: number, x2: number, y2: number): CropRect {
+  return { left: Math.min(x1, x2), top: Math.min(y1, y2), right: Math.max(x1, x2), bottom: Math.max(y1, y2) }
+}
+
 const ZOOM_STEP = 1.25
 // Zoom is counted in whole steps from the fit-to-window size, so stepping back always lands exactly on it.
 const MIN_ZOOM_STEP = -10
@@ -36,18 +92,38 @@ interface PreviewProps {
   onClose: () => void
   onDuplicate: () => void
   onDelete: () => void
+  onCrop: (rect: CropRect, type: string) => void
   // Undefined at either end of the folder.
   onPrev?: () => void
   onNext?: () => void
+  // Off stretches the printed image over the whole page.
+  printKeepRatio: boolean
+  onPrintKeepRatioChange: (keep: boolean) => void
 }
 
-function Preview({ entry, onClose, onDuplicate, onDelete, onPrev, onNext }: PreviewProps): JSX.Element {
+function Preview({
+  entry,
+  onClose,
+  onDuplicate,
+  onDelete,
+  onCrop,
+  onPrev,
+  onNext,
+  printKeepRatio,
+  onPrintKeepRatioChange
+}: PreviewProps): JSX.Element {
   const stageRef = useRef<HTMLDivElement>(null)
+  const frameRef = useRef<HTMLDivElement>(null)
   const [natural, setNatural] = useState<{ width: number; height: number } | null>(null)
   // 0 = as large as fits on screen; each step is ×1.25 or ÷1.25 from there.
   const [zoomStep, setZoomStep] = useState(0)
   const [fit, setFit] = useState(1)
   const prevScaleRef = useRef<number | null>(null)
+  // 'quick' crops as soon as the drag ends; 'precise' waits for Zatwierdź.
+  const [cropMode, setCropMode] = useState<'quick' | 'precise' | null>(null)
+  const [crop, setCrop] = useState<CropRect | null>(null)
+  const dragRef = useRef<CropDrag | null>(null)
+  const type = cropType(entry)
 
   useEffect(() => {
     const stage = stageRef.current
@@ -79,47 +155,153 @@ function Preview({ entry, onClose, onDuplicate, onDelete, onPrev, onNext }: Prev
   const zoomIn = useCallback(() => setZoomStep((step) => Math.min(step + 1, MAX_ZOOM_STEP)), [])
   const zoomOut = useCallback(() => setZoomStep((step) => Math.max(step - 1, MIN_ZOOM_STEP)), [])
 
+  const startCrop = (mode: 'quick' | 'precise'): void => {
+    setCropMode(mode)
+    // Precise starts from the whole image, so each side can be pulled in straight away.
+    setCrop(mode === 'precise' && natural ? { left: 0, top: 0, right: natural.width, bottom: natural.height } : null)
+  }
+  const cancelCrop = useCallback(() => {
+    setCropMode(null)
+    setCrop(null)
+  }, [])
+  const cropUsable = crop !== null && crop.right - crop.left >= 1 && crop.bottom - crop.top >= 1
+  const confirmCrop = useCallback(() => {
+    if (crop && cropUsable && type) onCrop(crop, type)
+  }, [crop, cropUsable, type, onCrop])
+
+  const imagePoint = (event: React.PointerEvent): { x: number; y: number } => {
+    const box = frameRef.current!.getBoundingClientRect()
+    const clamp = (value: number, max: number): number => Math.min(Math.max(Math.round(value / scale), 0), max)
+    return { x: clamp(event.clientX - box.left, natural!.width), y: clamp(event.clientY - box.top, natural!.height) }
+  }
+
+  const onCropPointerDown = (event: React.PointerEvent): void => {
+    if (!cropMode || event.button !== 0) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    // A handle has already claimed this drag on its way down.
+    if (dragRef.current) return
+    const { x, y } = imagePoint(event)
+    dragRef.current = { kind: 'draw', x, y }
+    setCrop(rectFrom(x, y, x, y))
+  }
+
+  const onCropPointerMove = (event: React.PointerEvent): void => {
+    const drag = dragRef.current
+    if (!drag) return
+    const { x, y } = imagePoint(event)
+    if (drag.kind === 'draw') {
+      setCrop(rectFrom(drag.x, drag.y, x, y))
+      return
+    }
+    const { edges } = drag
+    setCrop((rect) =>
+      rect && {
+        left: edges.left ? Math.min(x, rect.right - 1) : rect.left,
+        top: edges.top ? Math.min(y, rect.bottom - 1) : rect.top,
+        right: edges.right ? Math.max(x, rect.left + 1) : rect.right,
+        bottom: edges.bottom ? Math.max(y, rect.top + 1) : rect.bottom
+      }
+    )
+  }
+
+  const onCropPointerUp = (event: React.PointerEvent): void => {
+    const drag = dragRef.current
+    dragRef.current = null
+    if (cropMode !== 'quick' || drag?.kind !== 'draw' || !type) return
+    const { x, y } = imagePoint(event)
+    const rect = rectFrom(drag.x, drag.y, x, y)
+    // A plain click is not a crop.
+    if (rect.right - rect.left < 2 || rect.bottom - rect.top < 2) setCrop(null)
+    else onCrop(rect, type)
+  }
+
+  // Wide images go on a landscape page so they print as large as they can.
+  const print = (): void => {
+    if (natural) window.api.printImage(entry.path, natural.width > natural.height)
+  }
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') (cropMode ? cancelCrop : onClose)()
+      else if (event.key === 'Enter' && cropMode === 'precise') confirmCrop()
+      else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'p') {
+        if (!cropMode && natural) print()
+      }
       else if (event.key === '+' || event.key === '=') zoomIn()
       else if (event.key === '-') zoomOut()
-      else if (event.key === 'ArrowLeft' && !event.metaKey && !event.altKey) onPrev?.()
-      else if (event.key === 'ArrowRight' && !event.metaKey && !event.altKey) onNext?.()
+      // Leaving the image mid-crop would throw the crop away.
+      else if (event.key === 'ArrowLeft' && !event.metaKey && !event.altKey && !cropMode) onPrev?.()
+      else if (event.key === 'ArrowRight' && !event.metaKey && !event.altKey && !cropMode) onNext?.()
       else return
       event.preventDefault()
       event.stopPropagation()
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [onClose, zoomIn, zoomOut, onPrev, onNext])
+  }, [onClose, zoomIn, zoomOut, onPrev, onNext, cropMode, cancelCrop, confirmCrop, natural, entry.path])
 
   return (
-    <div className="preview" role="dialog" aria-label={entry.name}>
+    <div className={`preview${printKeepRatio ? '' : ' print-stretch'}`} role="dialog" aria-label={entry.name}>
       <div className="preview-stage" ref={stageRef}>
         <div className="preview-canvas">
-          <img
-            src={fullUrl(entry)}
-            alt={entry.name}
-            draggable={false}
-            onLoad={(event) => setNatural({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
-            style={natural ? { width: natural.width * scale, height: natural.height * scale } : { visibility: 'hidden' }}
-          />
+          <div
+            className={`preview-frame${cropMode ? ' cropping' : ''}`}
+            ref={frameRef}
+            onPointerDown={onCropPointerDown}
+            onPointerMove={onCropPointerMove}
+            onPointerUp={onCropPointerUp}
+          >
+            <img
+              src={fullUrl(entry)}
+              alt={entry.name}
+              draggable={false}
+              onLoad={(event) => setNatural({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+              style={natural ? { width: natural.width * scale, height: natural.height * scale } : { visibility: 'hidden' }}
+            />
+            {cropMode && crop && (
+              <div
+                className="crop-box"
+                style={{
+                  left: crop.left * scale,
+                  top: crop.top * scale,
+                  width: (crop.right - crop.left) * scale,
+                  height: (crop.bottom - crop.top) * scale
+                }}
+              >
+                {cropMode === 'precise' &&
+                  CROP_HANDLES.map(([name, edges]) => (
+                    <span
+                      key={name}
+                      className={`crop-handle crop-${name}`}
+                      onPointerDown={() => (dragRef.current = { kind: 'edges', edges })}
+                    />
+                  ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
-      <div className="preview-info">
-        <div className="preview-name" title={entry.name}>
-          {entry.name}
+      <div className="preview-side">
+        <div className="preview-info">
+          <div className="preview-name" title={entry.name}>
+            {entry.name}
+          </div>
+          <div className="preview-meta">
+            {formatSize(entry.size)}
+            {natural && ` · ${natural.width} × ${natural.height} px`}
+            {cropMode && crop && ` · kadr ${crop.right - crop.left} × ${crop.bottom - crop.top} px`}
+          </div>
         </div>
-        <div className="preview-meta">
-          {formatSize(entry.size)}
-          {natural && ` · ${natural.width} × ${natural.height} px`}
-        </div>
+        {!cropMode && (
+          <button className="key" onClick={onDelete} title="Przenieś do Kosza">
+            Usuń
+          </button>
+        )}
       </div>
-      <button className="key preview-nav preview-prev" onClick={onPrev} disabled={!onPrev} title="Poprzednie (←)" aria-label="Poprzednie">
+      <button className="key preview-nav preview-prev" onClick={onPrev} disabled={!onPrev || !!cropMode} title="Poprzednie (←)" aria-label="Poprzednie">
         ‹
       </button>
-      <button className="key preview-nav preview-next" onClick={onNext} disabled={!onNext} title="Następne (→)" aria-label="Następne">
+      <button className="key preview-nav preview-next" onClick={onNext} disabled={!onNext || !!cropMode} title="Następne (→)" aria-label="Następne">
         ›
       </button>
       <div className="preview-controls">
@@ -132,12 +314,55 @@ function Preview({ entry, onClose, onDuplicate, onDelete, onPrev, onNext }: Prev
         </button>
       </div>
       <div className="preview-actions">
-        <button className="key" onClick={onDuplicate} title="Zrób kopię z dopiskiem „-kopia”">
-          Duplikuj
-        </button>
-        <button className="key" onClick={onDelete} title="Przenieś do Kosza">
-          Usuń
-        </button>
+        {cropMode ? (
+          <>
+            {cropMode === 'precise' && (
+              <button className="key" onClick={confirmCrop} disabled={!cropUsable} title="Obetnij i zapisz (Enter)">
+                Zatwierdź
+              </button>
+            )}
+            <button className="key" onClick={cancelCrop} title="Anuluj kadrowanie (Esc)">
+              Anuluj
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              className="key"
+              onClick={() => startCrop('quick')}
+              disabled={!type || !natural}
+              title={type ? 'Przeciągnij po zdjęciu — kadr zapisze się od razu' : 'Kadrowanie działa dla JPG, PNG i WebP'}
+            >
+              Kadruj szybko
+            </button>
+            <button
+              className="key"
+              onClick={() => startCrop('precise')}
+              disabled={!type || !natural}
+              title={type ? 'Ustaw każdy bok kadru i zatwierdź' : 'Kadrowanie działa dla JPG, PNG i WebP'}
+            >
+              Kadruj dokładnie
+            </button>
+            <button className="key" onClick={onDuplicate} title="Zrób kopię z dopiskiem „-kopia”">
+              Duplikuj
+            </button>
+            <div className="print-group">
+              <button className="key" onClick={print} disabled={!natural} title="Drukuj (⌘P)">
+                Drukuj
+              </button>
+              <button
+                className="key print-ratio"
+                role="switch"
+                aria-checked={printKeepRatio}
+                onClick={() => onPrintKeepRatioChange(!printKeepRatio)}
+                title={printKeepRatio ? 'Drukuje z zachowaniem proporcji' : 'Rozciąga obraz na całą kartkę'}
+              >
+                <span className="switch" aria-hidden="true" />
+                Proporcje
+              </button>
+            </div>
+          </>
+        )}
         <button className="key preview-close" onClick={onClose} title="Zamknij (Esc)" aria-label="Zamknij">
           ×
         </button>
@@ -182,6 +407,7 @@ export default function App(): JSX.Element {
   const [listing, setListing] = useState<FolderListing | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [previewed, setPreviewed] = useState<FolderEntry | null>(null)
+  const [printKeepRatio, setPrintKeepRatio] = useState(true)
   const requestRef = useRef(0)
   const gridRef = useRef<HTMLElement>(null)
 
@@ -251,6 +477,21 @@ export default function App(): JSX.Element {
     }
   }, [previewed, listing, navigate])
 
+  // The original goes to the Trash, so a bad crop can be taken back from Finder.
+  const cropPreviewed = useCallback(
+    async (rect: CropRect, type: string) => {
+      if (!previewed) return
+      try {
+        const cropped = await window.api.replaceImage(previewed.path, await cropImage(previewed, rect, type))
+        setPreviewed(cropped)
+        if (listing) navigate(listing.path, true)
+      } catch {
+        window.alert(`Nie udało się wykadrować: ${previewed.name}`)
+      }
+    },
+    [previewed, listing, navigate]
+  )
+
   const images = listing?.entries.filter((entry) => entry.kind === 'image') ?? []
   const imageCount = images.length
   const previewedIndex = previewed ? images.findIndex((entry) => entry.path === previewed.path) : -1
@@ -318,13 +559,17 @@ export default function App(): JSX.Element {
 
       {previewed && (
         <Preview
-          key={previewed.path}
+          // mtime in the key, so a cropped file reopens fresh: fitted zoom, no crop mode.
+          key={`${previewed.path}:${previewed.mtimeMs}`}
           entry={previewed}
           onClose={closePreview}
           onDuplicate={duplicatePreviewed}
           onDelete={deletePreviewed}
+          onCrop={cropPreviewed}
           onPrev={prevImage && (() => setPreviewed(prevImage))}
           onNext={nextImage && (() => setPreviewed(nextImage))}
+          printKeepRatio={printKeepRatio}
+          onPrintKeepRatioChange={setPrintKeepRatio}
         />
       )}
     </div>

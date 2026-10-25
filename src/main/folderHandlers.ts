@@ -1,4 +1,4 @@
-import { app, ipcMain, shell } from 'electron'
+import { app, ipcMain, shell, type WebContents } from 'electron'
 import { promises as fs } from 'fs'
 import { basename, dirname, extname, join, parse, sep } from 'path'
 import { IMAGE_EXTENSIONS, type Crumb, type FolderEntry, type FolderListing } from '../shared/types'
@@ -101,6 +101,35 @@ async function duplicateImage(filePath: string): Promise<FolderEntry> {
   }
 }
 
+// Cropped bytes go to a hidden temp file first; the original then goes to the Trash
+// (so a bad crop can be undone from Finder) and the temp file takes its name.
+async function replaceImage(filePath: string, bytes: Uint8Array): Promise<FolderEntry> {
+  const name = basename(filePath)
+  const tmpPath = join(dirname(filePath), `.${name}.painter-tmp`)
+  await fs.writeFile(tmpPath, bytes)
+  try {
+    await shell.trashItem(filePath)
+  } catch (error) {
+    await fs.unlink(tmpPath).catch(() => {})
+    throw error
+  }
+  await fs.rename(tmpPath, filePath)
+  const stats = await fs.stat(filePath)
+  return { name, path: filePath, kind: 'image', mtimeMs: stats.mtimeMs, size: stats.size }
+}
+
+// Electron's own print dialog on macOS has no preview, so the page goes to an A4 PDF
+// that opens in Preview, where the layout is visible and ⌘P prints with a thumbnail.
+async function printToPreview(sender: WebContents, filePath: string, landscape: boolean): Promise<void> {
+  const pdf = await sender.printToPDF({ pageSize: 'A4', landscape, margins: { marginType: 'none' } })
+  const dir = join(app.getPath('temp'), 'painter-print')
+  await fs.mkdir(dir, { recursive: true })
+  const pdfPath = join(dir, `${basename(filePath, extname(filePath))}.pdf`)
+  await fs.writeFile(pdfPath, pdf)
+  const error = await shell.openPath(pdfPath)
+  if (error) throw new Error(error)
+}
+
 function assertImage(filePath: string): void {
   if (!IMAGE_EXTENSIONS.has(extname(filePath).toLowerCase())) throw new Error(`Not an image: ${filePath}`)
 }
@@ -129,10 +158,25 @@ export function registerFolderHandlers(): void {
     return duplicateImage(filePath)
   })
 
+  ipcMain.handle('image:read', async (_event, filePath: string): Promise<Uint8Array> => {
+    assertImage(filePath)
+    return fs.readFile(filePath)
+  })
+
+  ipcMain.handle('image:replace', async (_event, filePath: string, bytes: Uint8Array): Promise<FolderEntry> => {
+    assertImage(filePath)
+    return replaceImage(filePath, bytes)
+  })
+
   // Trash rather than unlink, so a mistaken delete can be undone from Finder.
   ipcMain.handle('image:trash', async (_event, filePath: string): Promise<void> => {
     assertImage(filePath)
     await shell.trashItem(filePath)
+  })
+
+  ipcMain.handle('image:print', async (event, filePath: string, landscape: boolean): Promise<void> => {
+    assertImage(filePath)
+    await printToPreview(event.sender, filePath, landscape)
   })
 
   ipcMain.handle('folder:reveal', async (_event, folderPath: string): Promise<void> => {

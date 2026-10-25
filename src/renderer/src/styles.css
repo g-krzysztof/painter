@@ -275,6 +275,84 @@ button:focus-visible {
   max-width: none;
 }
 
+.preview-frame {
+  position: relative;
+}
+
+.preview-frame.cropping {
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* The huge shadow dims everything outside the crop. */
+.crop-box {
+  position: absolute;
+  border: 1px solid var(--cream);
+  box-shadow: 0 0 0 100vmax rgba(7, 11, 20, 0.6);
+  pointer-events: none;
+}
+
+.crop-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border: 1px solid var(--bg-deep);
+  border-radius: 2px;
+  background: var(--cream);
+  pointer-events: auto;
+}
+
+.crop-n,
+.crop-s {
+  left: 50%;
+  width: 28px;
+  margin-left: -14px;
+  cursor: ns-resize;
+}
+
+.crop-w,
+.crop-e {
+  top: 50%;
+  height: 28px;
+  margin-top: -14px;
+  cursor: ew-resize;
+}
+
+.crop-n,
+.crop-nw,
+.crop-ne {
+  top: 0;
+}
+
+.crop-s,
+.crop-sw,
+.crop-se {
+  top: 100%;
+}
+
+.crop-w,
+.crop-nw,
+.crop-sw {
+  left: 0;
+}
+
+.crop-e,
+.crop-ne,
+.crop-se {
+  left: 100%;
+}
+
+.crop-nw,
+.crop-se {
+  cursor: nwse-resize;
+}
+
+.crop-ne,
+.crop-sw {
+  cursor: nesw-resize;
+}
+
 .preview .key {
   background: var(--chrome);
   font-size: 16px;
@@ -285,11 +363,20 @@ button:focus-visible {
   background: var(--chrome-raised);
 }
 
-.preview-info {
+/* File details, with Usuń kept apart from the other actions so it is not hit by accident. */
+.preview-side {
   position: absolute;
   top: 14px;
   left: 14px;
   max-width: calc(100% - 260px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.preview-info {
+  max-width: 100%;
   padding: 7px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -318,7 +405,8 @@ button:focus-visible {
   gap: 8px;
 }
 
-.preview-actions .key {
+.preview-actions .key,
+.preview-side .key {
   height: 34px;
   font-size: 12px;
 }
@@ -374,4 +462,103 @@ button:focus-visible {
   text-align: center;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+.print-group {
+  display: flex;
+}
+
+/* Drukuj and its ratio switch read as one split button. */
+.print-group .key:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.print-group .print-ratio {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: -1px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.print-ratio[aria-checked='true'] {
+  color: var(--cream);
+}
+
+.switch {
+  position: relative;
+  width: 22px;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.print-ratio[aria-checked='true'] .switch {
+  background: var(--accent);
+}
+
+.print-ratio[aria-checked='true'] .switch::after {
+  transform: translateX(10px);
+  background: var(--bg-deep);
+}
+
+/* Printing from the preview puts only the image on the page, as large as it fits
+   edge to edge — small images are scaled up, never cropped. With the ratio
+   switched off it is stretched over the whole page instead. */
+@media print {
+  @page {
+    margin: 0;
+  }
+
+  html,
+  body,
+  #root,
+  .app {
+    height: auto;
+    background: none;
+  }
+
+  .app > :not(.preview),
+  .preview > :not(.preview-stage) {
+    display: none !important;
+  }
+
+  .preview,
+  .preview-stage {
+    position: static;
+    overflow: visible;
+    background: none;
+  }
+
+  .preview-canvas {
+    width: auto;
+    min-height: 0;
+  }
+
+  .preview-canvas img {
+    width: 100vw !important;
+    height: 100vh !important;
+    object-fit: contain;
+  }
+
+  .print-stretch .preview-canvas img {
+    object-fit: fill;
+  }
 }
