@@ -1,6 +1,6 @@
 {
   "name": "painter-app",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Minimal desktop image browser: folder navigation with thumbnails",
   "main": "./out/main/index.js",
   "author": "",

@@ -431,30 +431,50 @@ interface TileProps {
   entry: FolderEntry
   selected: boolean
   onOpen: (entry: FolderEntry) => void
+  onDuplicate: (entry: FolderEntry) => void
+  onDelete: (entry: FolderEntry) => void
 }
 
-function Tile({ entry, selected, onOpen }: TileProps): JSX.Element {
+function Tile({ entry, selected, onOpen, onDuplicate, onDelete }: TileProps): JSX.Element {
   const [failed, setFailed] = useState(false)
   const isDir = entry.kind === 'dir'
 
+  // The actions sit beside the tile button, not in it: buttons can't nest.
   return (
-    <button
-      className={`tile ${isDir ? 'tile-dir' : 'tile-image'}${selected ? ' selected' : ''}`}
-      title={entry.name}
-      data-path={entry.path}
-      onClick={() => onOpen(entry)}
-    >
-      <span className="thumb">
-        {isDir ? (
-          <FolderGlyph />
-        ) : failed ? (
-          <span className="thumb-missing">{entry.name.split('.').pop()?.toUpperCase()}</span>
-        ) : (
-          <img src={thumbUrl(entry)} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} />
-        )}
-      </span>
-      <span className="name">{entry.name}</span>
-    </button>
+    <div className={`tile-wrap${selected ? ' selected' : ''}`}>
+      <button
+        className={`tile ${isDir ? 'tile-dir' : 'tile-image'}${selected ? ' selected' : ''}`}
+        title={entry.name}
+        data-path={entry.path}
+        onClick={() => onOpen(entry)}
+      >
+        <span className="thumb">
+          {isDir ? (
+            <FolderGlyph />
+          ) : failed ? (
+            <span className="thumb-missing">{entry.name.split('.').pop()?.toUpperCase()}</span>
+          ) : (
+            <img src={thumbUrl(entry)} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} />
+          )}
+        </span>
+        <span className="name">{entry.name}</span>
+      </button>
+      {!isDir && (
+        <div className="tile-actions">
+          <button onClick={() => onDuplicate(entry)} title="Zrób kopię z dopiskiem „-kopia”" aria-label="Duplikuj">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+              <path d="M10.5 3.5v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5" />
+            </svg>
+          </button>
+          <button onClick={() => onDelete(entry)} title="Przenieś do Kosza" aria-label="Usuń">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2.5 4.5h11M6.5 4.5V3a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5M4 4.5l.7 8.6a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9l.7-8.6M6.8 7v4.5M9.2 7v4.5" />
+            </svg>
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -598,6 +618,31 @@ export default function App(): JSX.Element {
     }
   }, [previewed, listing, navigate])
 
+  // From a tile's corner: the copy gets the mark, so it is easy to spot in the grid.
+  const duplicateEntry = useCallback(
+    async (entry: FolderEntry) => {
+      try {
+        const copy = await window.api.duplicateImage(entry.path)
+        if (listing && (await navigate(listing.path, true))) setSelectedPath(copy.path)
+      } catch {
+        window.alert(`Nie udało się zduplikować: ${entry.name}`)
+      }
+    },
+    [listing, navigate]
+  )
+
+  const deleteEntry = useCallback(
+    async (entry: FolderEntry) => {
+      try {
+        await window.api.trashImage(entry.path)
+        if (listing) navigate(listing.path, true)
+      } catch {
+        window.alert(`Nie udało się usunąć: ${entry.name}`)
+      }
+    },
+    [listing, navigate]
+  )
+
   // The original goes to the Trash, so a bad crop can be taken back from Finder.
   const cropPreviewed = useCallback(
     async (rect: CropRect, type: string) => {
@@ -680,7 +725,16 @@ export default function App(): JSX.Element {
         {error && <p className="notice">Nie można otworzyć folderu: {error}</p>}
         {listing && listing.entries.length === 0 && !error && <p className="notice">Brak zdjęć i folderów</p>}
         <div className="grid" ref={tilesRef} style={{ ['--tile' as string]: `${TILE_SIZE}px` }}>
-          {listing?.entries.map((entry) => <Tile key={entry.path} entry={entry} selected={entry.path === selectedPath} onOpen={openEntry} />)}
+          {listing?.entries.map((entry) => (
+            <Tile
+              key={entry.path}
+              entry={entry}
+              selected={entry.path === selectedPath}
+              onOpen={openEntry}
+              onDuplicate={duplicateEntry}
+              onDelete={deleteEntry}
+            />
+          ))}
         </div>
       </main>
 
