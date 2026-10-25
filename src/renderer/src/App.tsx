@@ -58,6 +58,25 @@ async function cropImage(entry: FolderEntry, rect: CropRect, type: string): Prom
   canvas.height = height
   canvas.getContext('2d')!.drawImage(bitmap, rect.left, rect.top, width, height, 0, 0, width, height)
   bitmap.close()
+  return encodeCanvas(canvas, type)
+}
+
+// A quarter turn, clockwise or not; the canvas swaps width and height.
+async function rotateImage(entry: FolderEntry, clockwise: boolean, type: string): Promise<Uint8Array> {
+  const bytes = await window.api.readImage(entry.path)
+  const bitmap = await createImageBitmap(new Blob([bytes]), { imageOrientation: 'from-image' })
+  const canvas = document.createElement('canvas')
+  canvas.width = bitmap.height
+  canvas.height = bitmap.width
+  const context = canvas.getContext('2d')!
+  context.translate(canvas.width / 2, canvas.height / 2)
+  context.rotate(clockwise ? Math.PI / 2 : -Math.PI / 2)
+  context.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2)
+  bitmap.close()
+  return encodeCanvas(canvas, type)
+}
+
+async function encodeCanvas(canvas: HTMLCanvasElement, type: string): Promise<Uint8Array> {
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, 0.95))
   if (!blob) throw new Error('Encoding failed')
   return new Uint8Array(await blob.arrayBuffer())
@@ -93,6 +112,7 @@ interface PreviewProps {
   onDuplicate: () => void
   onDelete: () => void
   onCrop: (rect: CropRect, type: string) => void
+  onRotate: (clockwise: boolean, type: string) => Promise<void>
   // Undefined at either end of the folder.
   onPrev?: () => void
   onNext?: () => void
@@ -107,6 +127,7 @@ function Preview({
   onDuplicate,
   onDelete,
   onCrop,
+  onRotate,
   onPrev,
   onNext,
   printKeepRatio,
@@ -123,6 +144,8 @@ function Preview({
   const [cropMode, setCropMode] = useState<'quick' | 'precise' | null>(null)
   const [crop, setCrop] = useState<CropRect | null>(null)
   const dragRef = useRef<CropDrag | null>(null)
+  // Blocks a second turn while the first is still being written over the file.
+  const [rotating, setRotating] = useState(false)
   const type = cropType(entry)
 
   useEffect(() => {
@@ -213,6 +236,13 @@ function Preview({
     // A plain click is not a crop.
     if (rect.right - rect.left < 2 || rect.bottom - rect.top < 2) setCrop(null)
     else onCrop(rect, type)
+  }
+
+  const rotate = async (clockwise: boolean): Promise<void> => {
+    if (!type || rotating) return
+    setRotating(true)
+    await onRotate(clockwise, type)
+    setRotating(false)
   }
 
   // Wide images go on a landscape page so they print as large as they can.
@@ -342,6 +372,24 @@ function Preview({
               title={type ? 'Ustaw każdy bok kadru i zatwierdź' : 'Kadrowanie działa dla JPG, PNG i WebP'}
             >
               Kadruj dokładnie
+            </button>
+            <button
+              className="key"
+              onClick={() => rotate(false)}
+              disabled={!type || !natural || rotating}
+              title={type ? 'Obróć w lewo i zapisz' : 'Obracanie działa dla JPG, PNG i WebP'}
+              aria-label="Obróć w lewo"
+            >
+              ↺
+            </button>
+            <button
+              className="key"
+              onClick={() => rotate(true)}
+              disabled={!type || !natural || rotating}
+              title={type ? 'Obróć w prawo i zapisz' : 'Obracanie działa dla JPG, PNG i WebP'}
+              aria-label="Obróć w prawo"
+            >
+              ↻
             </button>
             <button className="key" onClick={onDuplicate} title="Zrób kopię z dopiskiem „-kopia”">
               Duplikuj
@@ -532,6 +580,21 @@ export default function App(): JSX.Element {
     [previewed, listing, navigate]
   )
 
+  // Saved the same way as a crop: the original goes to the Trash.
+  const rotatePreviewed = useCallback(
+    async (clockwise: boolean, type: string) => {
+      if (!previewed) return
+      try {
+        const rotated = await window.api.replaceImage(previewed.path, await rotateImage(previewed, clockwise, type))
+        setPreviewed(rotated)
+        if (listing) navigate(listing.path, true)
+      } catch {
+        window.alert(`Nie udało się obrócić: ${previewed.name}`)
+      }
+    },
+    [previewed, listing, navigate]
+  )
+
   const images = listing?.entries.filter((entry) => entry.kind === 'image') ?? []
   const imageCount = images.length
   const previewedIndex = previewed ? images.findIndex((entry) => entry.path === previewed.path) : -1
@@ -606,6 +669,7 @@ export default function App(): JSX.Element {
           onDuplicate={duplicatePreviewed}
           onDelete={deletePreviewed}
           onCrop={cropPreviewed}
+          onRotate={rotatePreviewed}
           onPrev={prevImage && (() => setPreviewed(prevImage))}
           onNext={nextImage && (() => setPreviewed(nextImage))}
           printKeepRatio={printKeepRatio}
