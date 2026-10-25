@@ -33,12 +33,15 @@ Obsługiwane formaty: JPG, PNG, GIF, WebP, BMP, TIFF, HEIC/HEIF, SVG. Kadrowanie
 
 ## Instalacja
 
-1. Pobierz `Painter-<wersja>-arm64-mac.dmg` (albo `.zip`) z [najnowszego wydania](https://github.com/g-krzysztof/painter/releases/latest).
+1. Pobierz `Painter-<wersja>-arm64.dmg` (albo `Painter-<wersja>-arm64-mac.zip`) z [najnowszego wydania](https://github.com/g-krzysztof/painter/releases/latest).
 2. Przenieś `Painter.app` do folderu **Programy**.
-3. Aplikacja nie jest podpisana certyfikatem Apple, więc przy pierwszym uruchomieniu kliknij ją prawym przyciskiem i wybierz **Otwórz**. Możesz też zdjąć kwarantannę z terminala:
+3. Przed pierwszym uruchomieniem zdejmij z aplikacji kwarantannę. W terminalu wpisz:
    ```sh
    xattr -cr /Applications/Painter.app
    ```
+   Aplikacja nie jest podpisana certyfikatem Apple. Bez tego kroku macOS pokaże komunikat **„Painter” jest uszkodzony i nie można go otworzyć**, a „prawy klik → Otwórz” nie pomoże. Plik nie jest uszkodzony: przeglądarka oznacza pobrane pliki kwarantanną, a macOS odrzuca wtedy niepodpisaną aplikację.
+
+   Wystarczy zrobić to raz na każdym komputerze. Aktualizacje instalowane z poziomu aplikacji nie dostają kwarantanny.
 
 Wydania są budowane tylko dla Maców z procesorem Apple Silicon (arm64).
 
