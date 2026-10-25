@@ -12,7 +12,7 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
     "dist:mac": "electron-vite build && electron-builder --mac dir --arm64",
-    "release:mac": "electron-vite build && electron-builder --mac zip dmg --arm64 --publish always"
+    "release:mac": "sh scripts/release.sh"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -54,12 +54,6 @@
         "zip"
       ],
       "identity": null
-    },
-    "publish": {
-      "provider": "github",
-      "owner": "g-krzysztof",
-      "repo": "painter",
-      "releaseType": "release"
     }
   },
   "allowScripts": {

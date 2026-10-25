@@ -84,15 +84,21 @@ scripts/      skrypty pomocnicze (fix-electron.mjs)
 
 ## Wydawanie nowej wersji
 
-1. Podbij `version` w `package.json`, np. `0.1.0` → `0.2.0`.
-2. Zbuduj i opublikuj wydanie na GitHubie:
+Jednorazowo zainstaluj [GitHub CLI](https://cli.github.com) i zaloguj się:
+
+```sh
+brew install gh
+gh auth login
+```
+
+Potem przy każdym wydaniu:
+
+1. Podbij `version` w `package.json`, np. `0.1.0` → `0.2.0`. Zrób commit i push.
+2. Zbuduj i opublikuj wydanie:
    ```sh
-   GH_TOKEN=<token z uprawnieniem repo> npm run release:mac
+   npm run release:mac
    ```
-   Skrypt buduje dmg i zip, tworzy wydanie `v<wersja>` i dołącza do niego oba pliki.
+   Skrypt `scripts/release.sh` buduje zip i dmg, tworzy wydanie `v<wersja>` na GitHubie i dołącza do niego oba pliki.
 3. Zainstalowane kopie zaproponują aktualizację przy najbliższym uruchomieniu.
 
-Repozytorium, z którego aplikacja pobiera aktualizacje, jest ustawione w dwóch miejscach. Przy zmianie nazwy lub właściciela repo trzeba poprawić oba:
-
-- `REPO` w `src/main/updater.ts`,
-- `build.publish` w `package.json`.
+Repozytorium, z którego aplikacja pobiera aktualizacje, jest ustawione w `REPO` w `src/main/updater.ts`.
