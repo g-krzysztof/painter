@@ -36,3 +36,9 @@ export interface FolderListing {
   crumbs: Crumb[]
   entries: FolderEntry[]
 }
+
+// An image opened from Finder, with the folder to show it in.
+export interface OpenedFile {
+  folder: string
+  path: string
+}

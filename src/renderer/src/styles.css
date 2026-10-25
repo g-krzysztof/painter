@@ -186,6 +186,15 @@ button:focus-visible {
   background: var(--chrome);
 }
 
+.tile.selected .thumb {
+  background: var(--chrome-raised);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.tile.selected .name {
+  color: var(--cream);
+}
+
 .glyph {
   width: 52%;
   fill: var(--chrome-raised);

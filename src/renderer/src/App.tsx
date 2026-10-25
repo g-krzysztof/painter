@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { THUMB_SCHEME, type FolderEntry, type FolderListing } from '../../shared/types'
+import { THUMB_SCHEME, type FolderEntry, type FolderListing, type OpenedFile } from '../../shared/types'
 
 const TILE_SIZE = 180
 const THUMB_PIXELS = Math.round(TILE_SIZE * Math.min(window.devicePixelRatio || 1, 2))
@@ -379,14 +379,21 @@ function FolderGlyph(): JSX.Element {
   )
 }
 
-function Tile({ entry, onOpen }: { entry: FolderEntry; onOpen: (entry: FolderEntry) => void }): JSX.Element {
+interface TileProps {
+  entry: FolderEntry
+  selected: boolean
+  onOpen: (entry: FolderEntry) => void
+}
+
+function Tile({ entry, selected, onOpen }: TileProps): JSX.Element {
   const [failed, setFailed] = useState(false)
   const isDir = entry.kind === 'dir'
 
   return (
     <button
-      className={`tile ${isDir ? 'tile-dir' : 'tile-image'}`}
+      className={`tile ${isDir ? 'tile-dir' : 'tile-image'}${selected ? ' selected' : ''}`}
       title={entry.name}
+      data-path={entry.path}
       onClick={() => onOpen(entry)}
     >
       <span className="thumb">
@@ -407,32 +414,65 @@ export default function App(): JSX.Element {
   const [listing, setListing] = useState<FolderListing | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [previewed, setPreviewed] = useState<FolderEntry | null>(null)
+  // The last image looked at, marked in the grid once the preview closes.
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [printKeepRatio, setPrintKeepRatio] = useState(true)
   const requestRef = useRef(0)
   const gridRef = useRef<HTMLElement>(null)
 
   // `refresh` reloads the same folder after a change in it, keeping the scroll position.
-  const navigate = useCallback(async (folderPath: string, refresh = false) => {
+  // Resolves to null when the folder can't be read or another navigation took over.
+  const navigate = useCallback(async (folderPath: string, refresh = false): Promise<FolderListing | null> => {
     const request = ++requestRef.current
     const result = await window.api.listFolder(folderPath)
     // A slower listing must not overwrite a folder the user has already moved past.
-    if (request !== requestRef.current) return
+    if (request !== requestRef.current) return null
     if (!result) {
       setError(folderPath)
-      return
+      return null
     }
     setError(null)
     setListing(result)
-    if (!refresh) gridRef.current?.scrollTo({ top: 0 })
+    if (!refresh) {
+      setSelectedPath(null)
+      gridRef.current?.scrollTo({ top: 0 })
+    }
+    return result
   }, [])
+
+  // An image opened from Finder: show its folder, mark it and open the preview.
+  const openFile = useCallback(
+    async (file: OpenedFile) => {
+      const result = await navigate(file.folder)
+      const entry = result?.entries.find((candidate) => candidate.path === file.path)
+      if (entry?.kind === 'image') setPreviewed(entry)
+    },
+    [navigate]
+  )
 
   const goToDesktop = useCallback(async () => {
     navigate(await window.api.getDesktopFolder())
   }, [navigate])
 
   useEffect(() => {
-    window.api.getStartFolder().then(navigate)
-  }, [navigate])
+    const unsubscribe = window.api.onFileOpened(openFile)
+    window.api.takeOpenedFile().then(async (file) => {
+      if (file) openFile(file)
+      else navigate(await window.api.getStartFolder())
+    })
+    return unsubscribe
+  }, [navigate, openFile])
+
+  useEffect(() => {
+    if (previewed) setSelectedPath(previewed.path)
+  }, [previewed])
+
+  useEffect(() => {
+    if (!selectedPath) return
+    gridRef.current
+      ?.querySelector(`[data-path="${CSS.escape(selectedPath)}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [listing, selectedPath])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -544,7 +584,7 @@ export default function App(): JSX.Element {
         {error && <p className="notice">Nie można otworzyć folderu: {error}</p>}
         {listing && listing.entries.length === 0 && !error && <p className="notice">Brak zdjęć i folderów</p>}
         <div className="grid" style={{ ['--tile' as string]: `${TILE_SIZE}px` }}>
-          {listing?.entries.map((entry) => <Tile key={entry.path} entry={entry} onOpen={openEntry} />)}
+          {listing?.entries.map((entry) => <Tile key={entry.path} entry={entry} selected={entry.path === selectedPath} onOpen={openEntry} />)}
         </div>
       </main>
 

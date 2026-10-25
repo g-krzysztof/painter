@@ -11,7 +11,8 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
-    "dist:mac": "electron-vite build && electron-builder --mac dir --arm64"
+    "dist:mac": "electron-vite build && electron-builder --mac dir --arm64",
+    "release:mac": "electron-vite build && electron-builder --mac zip dmg --arm64 --publish always"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -37,13 +38,28 @@
       "out/**/*",
       "package.json"
     ],
+    "fileAssociations": [
+      {
+        "ext": ["jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "svg"],
+        "name": "Image",
+        "role": "Viewer",
+        "rank": "Alternate"
+      }
+    ],
     "mac": {
       "category": "public.app-category.graphics-design",
       "target": [
         "dir",
-        "dmg"
+        "dmg",
+        "zip"
       ],
       "identity": null
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "g-krzysztof",
+      "repo": "painter",
+      "releaseType": "release"
     }
   },
   "allowScripts": {

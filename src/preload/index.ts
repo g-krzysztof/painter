@@ -1,8 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { FolderEntry, FolderListing } from '../shared/types'
+import type { FolderEntry, FolderListing, OpenedFile } from '../shared/types'
 
 const api = {
   getStartFolder: (): Promise<string> => ipcRenderer.invoke('folder:getStart'),
+  takeOpenedFile: (): Promise<OpenedFile | null> => ipcRenderer.invoke('file:takeOpened'),
+  onFileOpened: (callback: (file: OpenedFile) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, file: OpenedFile): void => callback(file)
+    ipcRenderer.on('file:opened', listener)
+    return () => ipcRenderer.removeListener('file:opened', listener)
+  },
   getDesktopFolder: (): Promise<string> => ipcRenderer.invoke('folder:getDesktop'),
   listFolder: (folderPath: string): Promise<FolderListing | null> => ipcRenderer.invoke('folder:list', folderPath),
   duplicateImage: (filePath: string): Promise<FolderEntry> => ipcRenderer.invoke('image:duplicate', filePath),
