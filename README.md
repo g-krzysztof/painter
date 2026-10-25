@@ -23,9 +23,12 @@ Obsługiwane formaty: JPG, PNG, GIF, WebP, BMP, TIFF, HEIC/HEIF, SVG. Kadrowanie
 
 | Skrót | Działanie |
 | --- | --- |
-| ⌘↑ (lub ⌥↑) | Folder wyżej |
+| ← → ↑ ↓ | Zaznacz sąsiedni plik lub folder |
+| Enter | Otwórz zaznaczony plik lub folder |
+| ⇧↓ | Wejdź do zaznaczonego folderu |
+| ⇧↑ (lub ⌘↑, ⌥↑) | Folder wyżej |
 | ⌘⇧D | Pulpit |
-| ← / → | Poprzednie / następne zdjęcie |
+| ← / → (w podglądzie) | Poprzednie / następne zdjęcie |
 | + / − | Przybliż / oddal |
 | ⌘P | Drukuj |
 | Enter | Zatwierdź kadr (tryb dokładny) |

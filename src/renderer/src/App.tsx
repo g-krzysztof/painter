@@ -462,11 +462,12 @@ export default function App(): JSX.Element {
   const [listing, setListing] = useState<FolderListing | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [previewed, setPreviewed] = useState<FolderEntry | null>(null)
-  // The last image looked at, marked in the grid once the preview closes.
+  // The last image looked at, or the entry picked with the arrow keys.
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [printKeepRatio, setPrintKeepRatio] = useState(true)
   const requestRef = useRef(0)
   const gridRef = useRef<HTMLElement>(null)
+  const tilesRef = useRef<HTMLDivElement>(null)
 
   // `refresh` reloads the same folder after a change in it, keeping the scroll position.
   // Resolves to null when the folder can't be read or another navigation took over.
@@ -498,6 +499,13 @@ export default function App(): JSX.Element {
     [navigate]
   )
 
+  // Marks the folder just left, so the arrows carry on from there.
+  const goUp = useCallback(async () => {
+    if (!listing?.parent) return
+    const from = listing.path
+    if (await navigate(listing.parent)) setSelectedPath(from)
+  }, [listing, navigate])
+
   const goToDesktop = useCallback(async () => {
     navigate(await window.api.getDesktopFolder())
   }, [navigate])
@@ -522,25 +530,50 @@ export default function App(): JSX.Element {
       ?.scrollIntoView({ block: 'nearest' })
   }, [listing, selectedPath])
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if ((event.metaKey || event.altKey) && event.key === 'ArrowUp' && listing?.parent) {
-        event.preventDefault()
-        navigate(listing.parent)
-      } else if (event.metaKey && event.shiftKey && event.key.toLowerCase() === 'd') {
-        // Same shortcut as Finder's Go → Desktop.
-        event.preventDefault()
-        goToDesktop()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [listing, navigate, goToDesktop])
-
   const openEntry = useCallback(
     (entry: FolderEntry) => (entry.kind === 'dir' ? navigate(entry.path) : setPreviewed(entry)),
     [navigate]
   )
+
+  // Moves the mark by `step` tiles; with nothing marked yet it lands on the first one.
+  const moveSelection = useCallback(
+    (step: number) => {
+      const entries = listing?.entries ?? []
+      if (entries.length === 0) return
+      const index = entries.findIndex((entry) => entry.path === selectedPath)
+      const next = index < 0 ? 0 : Math.min(Math.max(index + step, 0), entries.length - 1)
+      setSelectedPath(entries[next].path)
+    },
+    [listing, selectedPath]
+  )
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      // The preview handles its own keys.
+      if (previewed) return
+      const selected = listing?.entries.find((entry) => entry.path === selectedPath)
+      const plain = !event.metaKey && !event.altKey && !event.ctrlKey && !event.shiftKey
+      if ((event.metaKey || event.altKey || event.shiftKey) && event.key === 'ArrowUp') goUp()
+      else if (event.shiftKey && event.key === 'ArrowDown') {
+        if (selected?.kind === 'dir') navigate(selected.path)
+      } else if (event.metaKey && event.shiftKey && event.key.toLowerCase() === 'd') {
+        // Same shortcut as Finder's Go → Desktop.
+        goToDesktop()
+      } else if (plain && event.key === 'Enter') {
+        if (selected) openEntry(selected)
+      } else if (plain && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        moveSelection(event.key === 'ArrowLeft' ? -1 : 1)
+      } else if (plain && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+        const tiles = tilesRef.current
+        const columns = tiles ? getComputedStyle(tiles).gridTemplateColumns.split(' ').length : 1
+        moveSelection(event.key === 'ArrowUp' ? -columns : columns)
+      } else return
+      // Keeps the grid from scrolling and a focused tile from clicking itself.
+      event.preventDefault()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [previewed, listing, selectedPath, navigate, goUp, goToDesktop, openEntry, moveSelection])
   const closePreview = useCallback(() => setPreviewed(null), [])
 
   const duplicatePreviewed = useCallback(async () => {
@@ -606,7 +639,7 @@ export default function App(): JSX.Element {
       <header className="bar">
         <button
           className="key"
-          onClick={() => listing?.parent && navigate(listing.parent)}
+          onClick={goUp}
           disabled={!listing?.parent}
           title="Folder wyżej (⌘↑)"
           aria-label="Folder wyżej"
@@ -646,7 +679,7 @@ export default function App(): JSX.Element {
       <main className="grid-scroll" ref={gridRef}>
         {error && <p className="notice">Nie można otworzyć folderu: {error}</p>}
         {listing && listing.entries.length === 0 && !error && <p className="notice">Brak zdjęć i folderów</p>}
-        <div className="grid" style={{ ['--tile' as string]: `${TILE_SIZE}px` }}>
+        <div className="grid" ref={tilesRef} style={{ ['--tile' as string]: `${TILE_SIZE}px` }}>
           {listing?.entries.map((entry) => <Tile key={entry.path} entry={entry} selected={entry.path === selectedPath} onOpen={openEntry} />)}
         </div>
       </main>
