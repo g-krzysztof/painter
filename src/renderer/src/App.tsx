@@ -311,23 +311,23 @@ function Preview({
           </div>
         </div>
       </div>
-      <div className="preview-side">
-        <div className="preview-info">
-          <div className="preview-name" title={entry.name}>
-            {entry.name}
+      {/* Hidden while cropping so the top-left corner of the image stays reachable. */}
+      {!cropMode && (
+        <div className="preview-side">
+          <div className="preview-info">
+            <div className="preview-name" title={entry.name}>
+              {entry.name}
+            </div>
+            <div className="preview-meta">
+              {formatSize(entry.size)}
+              {natural && ` · ${natural.width} × ${natural.height} px`}
+            </div>
           </div>
-          <div className="preview-meta">
-            {formatSize(entry.size)}
-            {natural && ` · ${natural.width} × ${natural.height} px`}
-            {cropMode && crop && ` · kadr ${crop.right - crop.left} × ${crop.bottom - crop.top} px`}
-          </div>
-        </div>
-        {!cropMode && (
           <button className="key" onClick={onDelete} title="Przenieś do Kosza">
             Usuń
           </button>
-        )}
-      </div>
+        </div>
+      )}
       <button className="key preview-nav preview-prev" onClick={onPrev} disabled={!onPrev || !!cropMode} title="Poprzednie (←)" aria-label="Poprzednie">
         ‹
       </button>
